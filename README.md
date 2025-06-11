@@ -12,3 +12,11 @@ This playbook contains various basic security measurements:
 - Enforce secure passwords
 - Disable password ssh login
 - Update system packages
+
+
+
+
+
+# Notes
+
+Please review manually if the provided and implemented roles meets your security requirements. USAGE ON OWN RISK! 
