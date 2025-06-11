@@ -1,0 +1,11 @@
+- name: Flush existing iptables rules
+  command: iptables -F
+
+- name: Allow outgoing traffic to the specified IP
+  command: iptables -A OUTPUT -d {{ allowed_ip }} -j ACCEPT
+
+- name: Drop all other outgoing traffic
+  command: iptables -A OUTPUT -j DROP
+
+- name: Save iptables rules
+  command: iptables-save > /etc/iptables/rules.v4

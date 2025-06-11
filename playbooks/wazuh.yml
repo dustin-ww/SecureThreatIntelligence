@@ -1,0 +1,336 @@
+---
+# Wazuh All-in-One Installation Playbook
+# Installiert Wazuh Manager, Indexer und Dashboard auf einem Linux Host
+
+- name: Install Wazuh Security Platform
+  hosts: wazuh_servers
+  become: yes
+  vars:
+    # Wazuh Configuration
+    wazuh_version: "4.8.0"
+    wazuh_admin_password: "{{ vault_wazuh_admin_password | default('SecurePass123!') }}"
+    
+    # Network Configuration
+    wazuh_manager_ip: "{{ ansible_default_ipv4.address }}"
+    wazuh_indexer_ip: "{{ ansible_default_ipv4.address }}"
+    wazuh_dashboard_ip: "{{ ansible_default_ipv4.address }}"
+    
+    # Ports
+    wazuh_manager_port: 1514
+    wazuh_api_port: 55000
+    wazuh_indexer_port: 9200
+    wazuh_dashboard_port: 443
+    
+    # System Requirements
+    min_memory_gb: 2
+    min_disk_gb: 50
+
+  pre_tasks:
+    - name: Check system requirements
+      assert:
+        that:
+          - ansible_memtotal_mb >= (min_memory_gb * 1024)
+          - ansible_mounts | selectattr('mount', 'equalto', '/') | map(attribute='size_available') | first >= (min_disk_gb * 1024 * 1024 * 1024)
+        fail_msg: "System requirements not met: Need at least {{ min_memory_gb }}GB RAM and {{ min_disk_gb }}GB disk space"
+
+    - name: Update system packages
+      apt:
+        update_cache: yes
+        upgrade: dist
+      when: ansible_os_family == "Debian"
+
+    - name: Update system packages (RedHat)
+      yum:
+        name: "*"
+        state: latest
+      when: ansible_os_family == "RedHat"
+
+  tasks:
+    # System Preparation
+    - name: Install required packages
+      package:
+        name:
+          - curl
+          - gnupg
+          - apt-transport-https
+          - lsb-release
+          - ca-certificates
+          - wget
+          - unzip
+        state: present
+
+    - name: Set vm.max_map_count for Elasticsearch
+      sysctl:
+        name: vm.max_map_count
+        value: "262144"
+        state: present
+        reload: yes
+
+    - name: Create wazuh user
+      user:
+        name: wazuh
+        system: yes
+        shell: /bin/false
+        home: /var/ossec
+        create_home: no
+
+    # Wazuh Repository Setup
+    - name: Add Wazuh GPG key (Debian/Ubuntu)
+      apt_key:
+        url: https://packages.wazuh.com/key/GPG-KEY-WAZUH
+        state: present
+      when: ansible_os_family == "Debian"
+
+    - name: Add Wazuh repository (Debian/Ubuntu)
+      apt_repository:
+        repo: "deb https://packages.wazuh.com/4.x/apt/ stable main"
+        state: present
+        filename: wazuh
+      when: ansible_os_family == "Debian"
+
+    - name: Add Wazuh repository (RedHat/CentOS)
+      yum_repository:
+        name: wazuh
+        description: Wazuh repository
+        baseurl: https://packages.wazuh.com/4.x/yum/
+        gpgkey: https://packages.wazuh.com/key/GPG-KEY-WAZUH
+        gpgcheck: yes
+        enabled: yes
+      when: ansible_os_family == "RedHat"
+
+    # Download and prepare Wazuh installation assistant
+    - name: Create wazuh installation directory
+      file:
+        path: /opt/wazuh-install
+        state: directory
+        mode: '0755'
+
+    - name: Download Wazuh installation assistant
+      get_url:
+        url: "https://packages.wazuh.com/4.8/wazuh-install.sh"
+        dest: /opt/wazuh-install/wazuh-install.sh
+        mode: '0755'
+
+    - name: Create Wazuh configuration file
+      template:
+        src: config.yml.j2
+        dest: /opt/wazuh-install/config.yml
+        mode: '0644'
+      vars:
+        config_content: |
+          nodes:
+            indexer:
+              - name: wazuh-indexer
+                ip: {{ wazuh_indexer_ip }}
+            server:
+              - name: wazuh-manager
+                ip: {{ wazuh_manager_ip }}
+            dashboard:
+              - name: wazuh-dashboard
+                ip: {{ wazuh_dashboard_ip }}
+
+    # Generate certificates
+    - name: Generate Wazuh certificates
+      shell: |
+        cd /opt/wazuh-install
+        bash wazuh-install.sh --generate-config-files
+      args:
+        creates: /opt/wazuh-install/wazuh-certificates.tar
+
+    # Install Wazuh Indexer
+    - name: Install Wazuh Indexer
+      shell: |
+        cd /opt/wazuh-install
+        bash wazuh-install.sh --wazuh-indexer wazuh-indexer
+      args:
+        creates: /etc/wazuh-indexer
+
+    - name: Start and enable Wazuh Indexer
+      systemd:
+        name: wazuh-indexer
+        state: started
+        enabled: yes
+
+    - name: Wait for Wazuh Indexer to be ready
+      wait_for:
+        port: "{{ wazuh_indexer_port }}"
+        host: "{{ wazuh_indexer_ip }}"
+        timeout: 300
+
+    # Install Wazuh Manager
+    - name: Install Wazuh Manager
+      shell: |
+        cd /opt/wazuh-install
+        bash wazuh-install.sh --wazuh-server wazuh-manager
+      args:
+        creates: /var/ossec
+
+    - name: Start and enable Wazuh Manager
+      systemd:
+        name: wazuh-manager
+        state: started
+        enabled: yes
+
+    - name: Wait for Wazuh Manager to be ready
+      wait_for:
+        port: "{{ wazuh_manager_port }}"
+        host: "{{ wazuh_manager_ip }}"
+        timeout: 300
+
+    # Install Wazuh Dashboard
+    - name: Install Wazuh Dashboard
+      shell: |
+        cd /opt/wazuh-install
+        bash wazuh-install.sh --wazuh-dashboard wazuh-dashboard
+      args:
+        creates: /etc/wazuh-dashboard
+
+    - name: Start and enable Wazuh Dashboard
+      systemd:
+        name: wazuh-dashboard
+        state: started
+        enabled: yes
+
+    - name: Wait for Wazuh Dashboard to be ready
+      wait_for:
+        port: "{{ wazuh_dashboard_port }}"
+        host: "{{ wazuh_dashboard_ip }}"
+        timeout: 300
+
+    # Initialize cluster
+    - name: Initialize Wazuh cluster
+      shell: |
+        cd /opt/wazuh-install
+        bash wazuh-install.sh --start-cluster
+      register: cluster_init
+      changed_when: cluster_init.rc == 0
+
+    # Configure Firewall
+    - name: Configure UFW firewall (Ubuntu/Debian)
+      ufw:
+        rule: allow
+        port: "{{ item }}"
+        proto: tcp
+      loop:
+        - "{{ wazuh_manager_port }}"
+        - "{{ wazuh_api_port }}"
+        - "{{ wazuh_indexer_port }}"
+        - "{{ wazuh_dashboard_port }}"
+      when: ansible_os_family == "Debian"
+
+    - name: Configure firewalld (RedHat/CentOS)
+      firewalld:
+        port: "{{ item }}/tcp"
+        permanent: yes
+        state: enabled
+        immediate: yes
+      loop:
+        - "{{ wazuh_manager_port }}"
+        - "{{ wazuh_api_port }}"
+        - "{{ wazuh_indexer_port }}"
+        - "{{ wazuh_dashboard_port }}"
+      when: ansible_os_family == "RedHat"
+
+    # Change default passwords
+    - name: Change default admin password
+      shell: |
+        /usr/share/wazuh-indexer/plugins/opensearch-security/tools/hash.sh -p "{{ wazuh_admin_password }}" | \
+        sed 's/.*:/admin:/' > /tmp/admin_hash.txt
+        /usr/share/wazuh-indexer/plugins/opensearch-security/tools/securityadmin.sh \
+        -f /tmp/admin_hash.txt -t internalusers \
+        -cacert /etc/wazuh-indexer/certs/root-ca.pem \
+        -cert /etc/wazuh-indexer/certs/admin.pem \
+        -key /etc/wazuh-indexer/certs/admin-key.pem \
+        -h localhost
+      register: password_change
+      changed_when: password_change.rc == 0
+      when: wazuh_admin_password != "SecurePass123!"
+
+    # Verify installation
+    - name: Check Wazuh Manager status
+      systemd:
+        name: wazuh-manager
+      register: manager_status
+
+    - name: Check Wazuh Indexer status
+      systemd:
+        name: wazuh-indexer
+      register: indexer_status
+
+    - name: Check Wazuh Dashboard status
+      systemd:
+        name: wazuh-dashboard
+      register: dashboard_status
+
+    - name: Verify Wazuh API is responding
+      uri:
+        url: "https://{{ wazuh_manager_ip }}:{{ wazuh_api_port }}"
+        method: GET
+        validate_certs: no
+        status_code: 401  # Unauthorized is expected without credentials
+      register: api_check
+
+  post_tasks:
+    - name: Display installation summary
+      debug:
+        msg: |
+          ========================================
+          Wazuh Installation Complete!
+          ========================================
+          
+          Services Status:
+          - Wazuh Manager: {{ 'Running' if manager_status.status.ActiveState == 'active' else 'Not Running' }}
+          - Wazuh Indexer: {{ 'Running' if indexer_status.status.ActiveState == 'active' else 'Not Running' }}
+          - Wazuh Dashboard: {{ 'Running' if dashboard_status.status.ActiveState == 'active' else 'Not Running' }}
+          
+          Access URLs:
+          - Dashboard: https://{{ wazuh_dashboard_ip }}:{{ wazuh_dashboard_port }}
+          - API: https://{{ wazuh_manager_ip }}:{{ wazuh_api_port }}
+          
+          Default Credentials:
+          - Username: admin
+          - Password: {{ wazuh_admin_password }}
+          
+          Important Directories:
+          - Configuration: /var/ossec/etc/
+          - Logs: /var/ossec/logs/
+          - Rules: /var/ossec/ruleset/
+          
+          Next Steps:
+          1. Access the dashboard at https://{{ wazuh_dashboard_ip }}:{{ wazuh_dashboard_port }}
+          2. Install Wazuh agents on your endpoints
+          3. Configure custom rules and decoders as needed
+          4. Set up email alerts and integrations
+          
+          ========================================
+
+    - name: Save credentials to file
+      copy:
+        content: |
+          Wazuh Access Information
+          ========================
+          Dashboard URL: https://{{ wazuh_dashboard_ip }}:{{ wazuh_dashboard_port }}
+          API URL: https://{{ wazuh_manager_ip }}:{{ wazuh_api_port }}
+          Username: admin
+          Password: {{ wazuh_admin_password }}
+          
+          Installation Date: {{ ansible_date_time.iso8601 }}
+          Server: {{ inventory_hostname }}
+        dest: /root/wazuh-credentials.txt
+        mode: '0600'
+
+  handlers:
+    - name: restart wazuh-manager
+      systemd:
+        name: wazuh-manager
+        state: restarted
+
+    - name: restart wazuh-indexer
+      systemd:
+        name: wazuh-indexer
+        state: restarted
+
+    - name: restart wazuh-dashboard
+      systemd:
+        name: wazuh-dashboard
+        state: restarted
