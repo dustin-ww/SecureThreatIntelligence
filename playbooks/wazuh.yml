@@ -1,6 +1,5 @@
 ---
 # Wazuh All-in-One Installation Playbook
-# Installiert Wazuh Manager, Indexer und Dashboard auf einem Linux Host
 
 - name: Install Wazuh Security Platform
   hosts: wazuh_servers

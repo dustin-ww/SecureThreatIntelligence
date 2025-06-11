@@ -1,0 +1,29 @@
+- name: Backup existing sshd_config
+  copy:
+    src: /etc/ssh/sshd_config
+    dest: /etc/ssh/sshd_config.bak
+    remote_src: yes
+
+- name: Apply hardened SSH configuration
+  template:
+    src: sshd_config.j2
+    dest: /etc/ssh/sshd_config
+  notify: Restart SSH
+
+- name: Ensure SSH service is enabled and running
+  service:
+    name: sshd
+    state: started
+    enabled: yes
+
+- name: Restart SSH service
+  service:
+    name: sshd
+    state: restarted
+  when: ansible_os_family == "RedHat"
+
+- name: Restart SSH service (Debian-based)
+  service:
+    name: ssh
+    state: restarted
+  when: ansible_os_family == "Debian"

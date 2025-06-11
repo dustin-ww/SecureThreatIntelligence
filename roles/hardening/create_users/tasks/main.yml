@@ -1,0 +1,12 @@
+- name: Create users
+  user:
+    name: "{{ item.name }}"
+    password: "{{ item.password }}"
+    shell: "{{ item.shell }}"
+    state: present
+  loop: "{{ users }}"
+
+- name: Add user to sudo group if sudo is true
+  command: usermod -aG sudo "{{ item.name }}"
+  when: item.sudo | default(false)
+  loop: "{{ users }}"

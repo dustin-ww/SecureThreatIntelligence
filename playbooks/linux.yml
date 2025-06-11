@@ -1,0 +1,33 @@
+---
+# Playbook to setup and secure a Basic Linux Server Setups
+
+- name: Secure Basic Linux Setup
+  hosts: linux_servers
+  become: yes
+  vars:
+    # Configurations
+    linux_user_name: "admin"
+    linux_user_password: "todo"
+    users:
+    - name: "admin"
+      password: "{{ 'admin_password' | password_hash('sha512') }}"
+      shell: "/bin/bash"
+      sudo: true
+    - name: "developer"
+      password: "{{ 'dev_password' | password_hash('sha512') }}"
+      shell: "/bin/bash"
+      sudo: false
+
+  pre_tasks:
+    - name: Update system packages
+      apt:
+        update_cache: yes
+        upgrade: dist
+      #when: ansible_os_family == "Debian"
+  tasks:
+    - name: Perform full system upgrade
+      apt:
+        upgrade: full
+        update_cache: yes
+      #when: ansible_os_family == "Debian"
+  roles: 

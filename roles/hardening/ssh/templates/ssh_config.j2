@@ -1,0 +1,12 @@
+# Hardened SSH Configuration
+Port {{ ssh_port }}
+PermitRootLogin {{ permit_root_login }}
+PasswordAuthentication {{ password_authentication }}
+MaxAuthTries {{ max_auth_tries }}
+ChallengeResponseAuthentication no
+UsePAM yes
+X11Forwarding no
+AllowTcpForwarding no
+ClientAliveInterval 300
+ClientAliveCountMax 2
+LogLevel VERBOSE

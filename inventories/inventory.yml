@@ -1,0 +1,15 @@
+---
+all:
+  hosts:
+    tpot:
+      ansible_host: 192.168.1.10
+      ansible_user: ubuntu
+      ansible_ssh_private_key_file: /path/to/private/key
+    wazuh-server-2:
+      ansible_host: 192.168.1.11
+      ansible_user: ubuntu
+      ansible_ssh_private_key_file: /path/to/private/key
+
+  vars:
+    ansible_os_family: Debian
+    vault_wazuh_admin_password: "SuperSecurePassword123!"

@@ -1,8 +1,0 @@
----
-- name: Restrict outgoing traffic
-  hosts: all
-  become: yes
-  roles:
-    - restrict_outgoing
-  vars:
-    allowed_ip: "127.0.0.1" 
